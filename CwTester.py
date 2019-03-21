@@ -2,8 +2,9 @@
 
 from CoolwalletLib.CwHttpTransport import CoolwalletClient
 from CoolwalletLib.CwAPI import cwse_apdu_command
-from CoolwalletLib.CwClient import cw_client
-from CoolwalletLib.base58 import encode
+#from CoolwalletLib.CwClient import cw_client
+from CoolwalletLib.CwClient import CoolwalletClient as Client
+from CoolwalletLib.tools.base58 import encode
 
 import sys
 import random
@@ -13,6 +14,59 @@ import hashlib
 import hmac
 from Crypto.Cipher import AES
 
+def Bind_session_key(hostCred, Regotp, loginChlng, mtrl):
+    ## otpKey = sha256(hstCred||otp)
+    sha256 = hashlib.sha256()
+    sha256.update(hstCred)
+    sha256.update(Regotp)
+    otpKey = sha256.digest()
+    print('->otpkey:', otpKey.hex())
+    ## sessKey = sha256(loginChlng||otpKey||mtrl)
+    sha256 = hashlib.sha256()
+    sha256.update(loginChlng)
+    sha256.update(otpKey)
+    sha256.update(mtrl.encode('utf-8')) # srt'' -> b''
+    return sha256.digest() # sessKey
+
+def Bind_session_mac(data, hostCred, Regotp, loginChlng):
+    ## bind_smack = bind_session_key()
+    bind_smack = Bind_session_key(hostCred, Regotp, loginChlng, 'MAC')
+    ## mac = hmac_sha256(bind_smack, data)
+    hmac_sha256 = hmac.new(bind_smack, data, hashlib.sha256)
+    return hmac_sha256.digest() #mac
+
+def Readkey():
+    print('[read key]')
+    try:
+        fr = open("CoolwalletLib/tools/key.bin", "rb")
+    except Exception as e:
+        print(e)
+        sys.exit()
+    else:
+        fr.seek(0, 0)
+        data = fr.readline(1 + 6 + 16)
+        #print(data.hex()[:2]) # id
+        #print(data.hex()[2:2+12]) # otp
+        #print(data.hex()[2+12:2+12+32]) #login chlng
+        fr.close()
+        return data.hex()
+
+def test_readkey():
+    print('\n[read file]')
+
+    try:
+        fr = open("CoolwalletLib/tools/key.bin", "rb")
+    except Exception as e:
+        print(e)
+        sys.exit()
+    else:
+        hstID = fr.readline(1)
+        print('hstID:', hstID.hex())
+        otp = fr.readline(6)
+        print('otp:', otp.hex())
+        login_chlng = fr.readline(16)
+        print('login_chlng:', login_chlng.hex())
+        fr.close()
 
 def analysisReData(data):
     if not data:
@@ -32,7 +86,33 @@ def analysisReData(data):
         sys.exit()
 
 def se_info(conn):
-    conn.se_get_mode_state()
+    ret = analysisReData(conn.se_get_mode_state())
+    mode = ret[:2]
+    if mode == '00':
+        print('[INIT]')
+        return mode
+    elif mode == '01':
+        print('[PERSO]')
+        return mode
+    elif mode == '02':
+        print('[NORMAL]')
+        return mode
+    elif mode == '03':
+        print('[AUTH]')
+        return mode
+    elif mode == '04':
+        print('[LOCK]')
+        return mode
+    elif mode == '05':
+        print('[ERROR]')
+        return mode
+    elif mode == '06':
+        print('[NOHOST]')
+        return mode
+    elif mode == '07':
+        print('[DISCONN]')
+        return mode
+
 
 def BindRegTest(conn, hstCred, hstDesc):
     print('\n========BindRegTest========')
@@ -172,28 +252,6 @@ def BindBackToNoHost(conn): #error: 69 86
     ret = conn.se_bind_back_nohost(pin_resp, pin_hash)
     result = analysisReData(ret)
 
-def Bind_session_key(hostCred, Regotp, loginChlng, mtrl):
-    ## otpKey = sha256(hstCred||otp)
-    sha256 = hashlib.sha256()
-    sha256.update(hstCred)
-    sha256.update(Regotp)
-    otpKey = sha256.digest()
-    print('->otpkey:', otpKey.hex())
-    ## sessKey = sha256(loginChlng||otpKey||mtrl)
-    sha256 = hashlib.sha256()
-    sha256.update(loginChlng)
-    sha256.update(otpKey)
-    sha256.update(mtrl.encode('utf-8')) # srt'' -> b''
-    return sha256.digest() # sessKey
-
-def Bind_session_mac(data, hostCred, Regotp, loginChlng):
-    ## bind_smack = bind_session_key()
-    bind_smack = Bind_session_key(hostCred, Regotp, loginChlng, 'MAC')
-    ## mac = hmac_sha256(bind_smack, data)
-    hmac_sha256 = hmac.new(bind_smack, data, hashlib.sha256)
-    return hmac_sha256.digest() #mac
-
-
 def PersoSet(conn, data, hostCred, Regotp, loginChlng, mtrl):
     print('\n========PersoSet========')
 
@@ -209,47 +267,6 @@ def PersoSet(conn, data, hostCred, Regotp, loginChlng, mtrl):
     result = analysisReData(ret)
     ret = conn.se_get_mode_state()
     result = analysisReData(ret)
-
-def Auth(conn, hostCred):
-    print('\n========Auth========')
-    ret = conn.se_get_mode_state()
-    mode = analysisReData(ret)
-    # if mode != NORMAL
-    if not mode[:2] == '02':
-        print('MODE should be [NORMAL])')
-        sys.exit()
-
-    ret = conn.se_pin_chlng()
-    chlng = analysisReData(ret)
-    print('chlng:', chlng)
-
-    pin = '303030303030'
-    #pinHash = sha256(pin)
-    sha256 = hashlib.sha256()
-    sha256.update(bytes.fromhex(pin))
-    pinHash = sha256.digest()
-    # resp = aes-ecb(key=pinHash, chlng)
-    cryptor = AES.new(pinHash, AES.MODE_ECB)
-    resp = cryptor.encrypt(bytes.fromhex(chlng))
-    print('resp:', resp.hex())
-    ret = conn.se_pin_auth(resp.hex())
-    result = analysisReData(ret)
-
-def Readkey():
-    print('[read key]')
-    try:
-        fr = open("key.bin", "rb")
-    except Exception as e:
-        print('key not exist')
-        sys.exit()
-    else:
-        fr.seek(0, 0)
-        data = fr.readline(1 + 6 + 16)
-        #print(data.hex()[:2]) # id
-        #print(data.hex()[2:2+12]) # otp
-        #print(data.hex()[2+12:2+12+32]) #login chlng
-        fr.close()
-        return data.hex()
 
 def InitWallet_test(conn, hwdName, hostCred):
     print('\n========InitWallet_test========')
@@ -368,162 +385,168 @@ def hdw_query_xpub_test(conn, hostCred):
     checksum = sha256.digest()
 
     ex_pubkey = version + depth + fingerprint.hex() + childnumber + chacode.hex() + pubkey_y + pubkey.hex() + checksum[:4].hex() # hex str
-    #print(ex_pubkey)
-    print(encode(bytes.fromhex(ex_pubkey)))
+    print(ex_pubkey)
+    #print(encode(bytes.fromhex(ex_pubkey)))
     return {'xpub':encode(bytes.fromhex(ex_pubkey))}
 
-def test(conn):
-    print('\n[test]')
-    firstHost = '01'
-    print('\n[se_bind_reg_info]', 'HostID:', firstHost)
-    #ret = conn.se_bind_reg_info(firstHost)
-    firstHost = '00'
-    print('\n[se_bind_reg_info]', 'HostID:', firstHost)
-    #ret = conn.se_bind_reg_info(firstHost)
 
-def test_readkey():
-    print('\n[read file]')
-
-    try:
-        fr = open("key.bin", "rb")
-    except Exception as e:
-        print('key not exist')
-        sys.exit()
-    else:
-        hstID = fr.readline(1)
-        print('hstID:', hstID.hex())
-        otp = fr.readline(6)
-        print('otp:', otp.hex())
-        login_chlng = fr.readline(16)
-        print('login_chlng:', login_chlng.hex())
-        fr.close()
     
 
 if __name__ == '__main__':
+    T_CwHttpTransport = False
+    T_CwAPI = False
+    T_CwAPI_FUNC = False
+    T_CwClient = True
 
+    print('----------CwTester----------')
+    with open('CoolwalletLib/tools/ip.config') as f:
+        data = json.load(f)
+        f.close()
+    print('ip:', data['ip'], 'port', data['port'])
 
 #CoolwalletLib.CwClient Test
-    hwdName = 'abcdefghijklmnopqrstuvwxyz012345'#bytes(range(32))
-    conn3 = cw_client()
-    conn3.setup_device(hwdName)
-    conn3.get_pubkey_at_path()
-    conn3.close()
+    if T_CwClient:
+        print('CwClient test')
+        hwdName = 'abcdefghijklmnopqrstuvwxyz012345' #bytes(range(32))
+        '''
+        conn3 = cw_client()
+        conn3.setup_device(hwdName)
+        conn3.get_pubkey_at_path()
+        conn3.close()
+        '''
+        conn5 = Client()
+        #conn5.setup_device(hwdName)
 
-#API test
-    print('\n----------CwTest----------')
-    hstCred = bytes(range(32))
-    hstDesc = bytes(range(32, 96))
-    hwdName = 'abcdefghijklmnopqrstuvwxyz012345'#bytes(range(32))
-    with open('ip.config') as f:
-        data = json.load(f)
-    conn4 = cwse_apdu_command(data['ip'], data['port']) 
-    f.close()
+        path = [2147483692, 2147483648, 2147483648]
+        output = conn5.get_pubkey_at_path(path)
+        print(output)
+        conn5.close()
 
-    #test_readkey()
-    #test(conn4)
+#CoolwalletLib.CwAPI Function test
+    if T_CwAPI_FUNC:
+        print('CwAPI Function test')
+        conn4 = cwse_apdu_command(data['ip'], data['port']) 
 
-    se_info(conn4)
-    BindRegTest(conn4, hstCred, hstDesc)
+        hstCred = bytes(range(32))
+        hstDesc = bytes(range(32, 96))
+        hwdName = 'abcdefghijklmnopqrstuvwxyz012345' #bytes(range(32))
 
-    BindLogout(conn4)
-    BindLoginTest(conn4, hstCred)
+        #test_readkey()
 
-    hdw_query_wallet_info(conn4)
-    InitWallet_test(conn4, hwdName, hstCred)
-    hdw_create_account_test(conn4)
-    hdw_query_wallet_info(conn4)
+        se_info(conn4)
 
-    hdw_query_xpub_test(conn4, hstCred)
-    #BindBackToNoHost(conn4)
+        BindRegTest(conn4, hstCred, hstDesc)
+        BindLogout(conn4)
+        BindLoginTest(conn4, hstCred)
 
-'''
-#CoolwalletLib.CwHttpTransport Test
-    conn1 = CoolwalletClient('192.168.0.109', 9527)
-    conn1.CwWrite('80100000', '')
-    conn1.CwRead()
-    conn1.test_data()
+        hdw_query_wallet_info(conn4)
+        InitWallet_test(conn4, hwdName, hstCred)
+        hdw_create_account_test(conn4)
+        hdw_query_wallet_info(conn4)
+
+        hdw_query_xpub_test(conn4, hstCred)
+
+        #BindBackToNoHost(conn4)
 
 #CoolwalletLib.CwAPI Test
-    conn2 = cwse_apdu_command('192.168.66.167', 9527)
-    conn2.se_get_mode_state()
-    conn2.se_get_fw_version()
-    conn2.se_get_unique_id()
-    conn2.se_get_mod_err()
-    conn2.se_get_basic_info()
+    if T_CwAPI:
+        print('CwAPI test')
+        conn2 = cwse_apdu_command(data['ip'], data['port'])
 
-    hostCred = '1' * 64 # 32 bytes
-    hostDesc = '2' * 128
-    HASH = '1' * 64
-    conn2.se_bind_reg_init('00', hostCred, hostDesc, HASH)
-    BRHANDLE = '00' * 4
-    conn2.se_bind_reg_chlng(BRHANDLE)
-    BRHANDLE = '0' * 8
-    REGRESP = '1' * 32
-    PINRESP = '3' * 32
-    conn2.se_bind_reg_finish(BRHANDLE, REGRESP, PINRESP)
-    HST_ID = '00'
-    conn2.se_bind_reg_info(HST_ID)
-    conn2.se_bind_reg_approve(HST_ID)
-    conn2.se_bind_reg_remove(HST_ID)
+        print('#SE Information')
+        conn2.se_get_mode_state()
+        conn2.se_get_fw_version()
+        conn2.se_get_unique_id()
+        conn2.se_get_mod_err()
+        conn2.se_get_basic_info()
 
-    resp = conn2.se_bind_login_chlng(HST_ID)
-    if not resp:
-        print('failed')
-        sys.exit() 
-    resp = resp[:-7]
-    resp_sp = resp[:-7].split(' ')
-    resp_data = ''
-    for i in range(len(resp_sp)):
-        resp_data = resp_data + resp_sp[i]
-    print(resp_data)
-    conn2.se_bind_login(HST_ID, resp_data)
+        print('#Host Binding')
+        hostCred = '11' * 32 # 32 bytes
+        hostDesc = '22' * 64
+        HASH = '11' * 32
+        BRHANDLE = '00' * 4
+        BRHANDLE = '00' * 4
+        REGRESP = '11' * 16
+        PINRESP = '33' * 16
+        HST_ID = '00'
+        HSTCRED = '00' * 32
+        PINRESP = '00' * 16
+        PINHASH = '00' * 32
 
-    conn2.se_bind_logout()
-    HSTCRED = '0' * 64
-    conn2.se_bind_find_hst_id(HSTCRED)
-    PINRESP = '00' * 16
-    PINHASH = '00' * 32
-    conn2.se_bind_back_nohost(PINRESP, PINHASH)
+        conn2.se_bind_reg_init('00', hostCred, hostDesc, HASH)
+        conn2.se_bind_reg_chlng(BRHANDLE)
+        conn2.se_bind_reg_finish(BRHANDLE, REGRESP, PINRESP)
+        conn2.se_bind_reg_info(HST_ID)
+        conn2.se_bind_reg_approve(HST_ID)
+        conn2.se_bind_reg_remove(HST_ID)
+        conn2.se_bind_login_chlng(HST_ID)
+        conn2.se_bind_login(HST_ID, resp_data)
+        conn2.se_bind_logout()
+        conn2.se_bind_find_hst_id(HSTCRED)
+        conn2.se_bind_back_nohost(PINRESP, PINHASH)
 
-    PDID = '00'
-    PERDATA = '1' *  8
-    PDMAC = '2' * 64
-    conn2.se_perso_set_data(PDID, PERDATA, PDMAC)
-    conn2.se_perso_get_data_hash(PDID)
-    conn2.se_perso_confirm()
-    PINHASH = '1' * 64
-    conn2.se_perso_back_perso(PINHASH)
+        print('#Personalization')
+        PDID = '00'
+        PERDATA = '1' *  8
+        PDMAC = '2' * 64
+        PINHASH = '1' * 64
+        conn2.se_perso_set_data(PDID, PERDATA, PDMAC)
+        conn2.se_perso_get_data_hash(PDID)
+        conn2.se_perso_confirm()
+        conn2.se_perso_back_perso(PINHASH)
 
-    conn2.se_pin_chlng()
-    PINRESP = '0' * 32
-    conn2.se_pin_auth(PINRESP)
-    WRPINHASH = '1' * 64
-    MAC = '2' * 64
-    conn2.se_pin_change(WRPINHASH, MAC)
-    conn2.se_pin_logout()
+        print('#Authentication')
+        PINRESP = '0' * 32
+        WRPINHASH = '1' * 64
+        MAC = '2' * 64
+        conn2.se_pin_chlng()
+        conn2.se_pin_auth(PINRESP)
+        conn2.se_pin_change(WRPINHASH, MAC)
+        conn2.se_pin_logout()
 
-    conn2.se_get_card_name()
-    CARDNAME = '1' * 64
-    conn2.se_set_card_name(CARDNAME)
-    conn2.se_get_secpo()
-    SECPO = '2' * 8
-    conn2.se_set_secpo(SECPO)
+        print('#BCDC Setting')
+        CARDNAME = '1' * 64
+        SECPO = '2' * 8
+        conn2.se_get_card_name()
+        conn2.se_set_card_name(CARDNAME)
+        conn2.se_get_secpo()
+        conn2.se_set_secpo(SECPO)
 
-    conn2.se_trx_status()
-    AMOUNT = '0' * 32 * 2
-    ENCOUTADDR = '1' * 48 * 2
-    conn2.se_trx_begin(AMOUNT, ENCOUTADDR)
-    IN_ID = '01'
-    conn2.se_trx_get_ctxinfo(IN_ID)
-    conn2.se_trx_sign(IN_ID)
-    conn2.se_trx_finish()
+        print('#Transaction Signing')
+        AMOUNT = '0' * 32 * 2
+        ENCOUTADDR = '1' * 48 * 2
+        IN_ID = '01'
+        conn2.se_trx_status()
+        conn2.se_trx_begin(AMOUNT, ENCOUTADDR)
+        conn2.se_trx_get_ctxinfo(IN_ID)
+        conn2.se_trx_sign(IN_ID)
+        conn2.se_trx_finish()
 
-    HDWNAME = '0' * 32 * 2
-    EMKSEED = '1' * 64 * 2
-    MAC = '2' * 32 * 2
-    conn2.se_hdw_init_wallet(HDWNAME, EMKSEED, MAC)
-    INFOID = '00'
-    conn2.se_hdw_qry_wa_info(INFOID)
-    HDWINFO = '1' * 32 * 2
-    conn2.se_hdw_set_wa_info('01', HDWINFO)
-    '''
+        print('#HD Wallet')
+        HDWNAME = '0' * 32 * 2
+        EMKSEED = '1' * 64 * 2
+        MAC = '2' * 32 * 2
+        INFOID = '00'
+        HDWINFO = '1' * 32 * 2
+
+        conn2.se_hdw_init_wallet(HDWNAME, EMKSEED, MAC)
+        conn2.se_hdw_qry_wa_info(INFOID)
+        conn2.se_hdw_set_wa_info('01', HDWINFO)
+        '''
+        conn2.se_hdw_create_account(self, ACCID, ACCNAME)
+        conn2.se_hdw_qry_acc_info(self, INFOID, BalanceFormat, ACCID)
+        conn2.se_hdw_set_acc_info(self, INFOID, ACCID, ACCINFO, MAC)
+        conn2.se_hdw_next_trx_addr(self, KCID, ACCID)
+        conn2.se_hdw_prep_trx_sign(self, IN_ID, KCID, ACCID, KID, BALNC, SIGMTRL, MAC)
+        conn2.se_hdw_init_wallet_gen_confirm(self, ACTVCODE, NUCHKSUM)
+        '''
+#CoolwalletLib.CwHttpTransport Test
+    if T_CwHttpTransport:
+        print('CwHttpTransport test 80100000')
+        ip = input('ip: ')
+        port = input('port: ')
+        conn1 = CoolwalletClient(ip, port)
+        conn1.CwWrite('80100000', '')
+        conn1.CwRead()
+    else:
+        pass

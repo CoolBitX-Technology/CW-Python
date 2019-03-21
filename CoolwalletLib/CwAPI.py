@@ -16,7 +16,6 @@ class cwse_apdu_command:
 
     #Get SE mode and state 
     def se_get_mode_state(self):
-        #connet = CoolwalletClient(self.server, self.port)
         cmd = '80100000'
         self.connet.CwWrite(cmd)
         return self.connet.CwRead()
@@ -29,32 +28,30 @@ class cwse_apdu_command:
 
     #Get SE unique ID
     def se_get_unique_id(self):
-        #self.connet.= CoolwalletClient(self.server, self.port)
         cmd = '80120000'
         self.connet.CwWrite(cmd)
         return self.connet.CwRead()
 
     #Get internal module error
     def se_get_mod_err(self):
-        #self.connet.= CoolwalletClient(self.server, self.port)
         cmd = '80130000'
         self.connet.CwWrite(cmd)
         return self.connet.CwRead()
 
     #Get SE basic info
     def se_get_basic_info(self):
-        #self.connet.= CoolwalletClient(self.server, self.port)
         cmd = '80140000'
         self.connet.CwWrite(cmd)
         return self.connet.CwRead()
 
     #Back to IKV loader
+    def se_back_ikvldr(self):
+        pass
 
 #Host Binding
 
     #Init binding registeration
     def se_bind_reg_init(self, FIRST, HSTCRED, HSTDESC, HASH):
-        #self.connet.= CoolwalletClient(self.server, self.port)
         cmd = '80D0' + FIRST + '00'
         data = HSTCRED + HSTDESC + HASH # 32 bytes + 64 bytes + (HASH of HSTCRED || HSTDESC)32 bytes
         if self.connet.CwWrite(cmd, data):
@@ -64,7 +61,6 @@ class cwse_apdu_command:
 
     #Get registration challenge
     def se_bind_reg_chlng(self, BRHANDLE):
-        #self.connet.= CoolwalletClient(self.server, self.port)
         cmd = '80D10000'
         data = BRHANDLE # 4 bytes
         if self.connet.CwWrite(cmd, data):

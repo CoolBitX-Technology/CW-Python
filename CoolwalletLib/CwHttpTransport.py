@@ -19,8 +19,8 @@ class CoolwalletClient(CoolWalletTransport):
         self.data = data
         url = '/?cmd=' + cmd + '&data=' + data
         #print('[url]:', url)
-        print('--------------------\ncmd:', cmd)
-        print('data:', data)
+        print('#--------------------\n#cmd:', cmd)
+        print('#data:', data)
         #conn = http.client.HTTPConnection(self.server, self.port, timeout=10)
         try:
             self.conn.request('GET', url)
@@ -36,7 +36,7 @@ class CoolwalletClient(CoolWalletTransport):
 
     def CwRead(self):
         if not self.data:
-            print('None data')
+            print('#None data')
             return False
         data_get = self.data.decode('utf-8').split('<!DOCTYPE html>')[-1]
 
@@ -46,7 +46,7 @@ class CoolwalletClient(CoolWalletTransport):
         data_response = data_get[data_get.find('Response:') + 9 : data_get.find('<br><br>')]
 
         #print('time:', data_time, '\ncommand:', data_command, '\ndata:', data_data, '\nresponse:', data_response)
-        print('response:', data_response)
+        print('#response:', data_response)
         return data_response
 
     def CwCloseHTTP(self):
