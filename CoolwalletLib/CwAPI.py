@@ -8,6 +8,7 @@ class cwse_apdu_command:
         self.server = server
         self.port = port
         self.connet = CoolwalletClient(self.server, self.port)
+        self.apdu_CLA = 80
 
     def close(self):
         self.connet.CwCloseHTTP()
@@ -17,6 +18,8 @@ class cwse_apdu_command:
     #Get SE mode and state 
     def se_get_mode_state(self):
         cmd = '80100000'
+        if self.apdu_CLA == 81:
+            cmd = '81100000'        
         self.connet.CwWrite(cmd)
         return self.connet.CwRead()
 
@@ -35,6 +38,8 @@ class cwse_apdu_command:
     #Get internal module error
     def se_get_mod_err(self):
         cmd = '80130000'
+        if self.apdu_CLA == 81:
+            cmd = '81130000'
         self.connet.CwWrite(cmd)
         return self.connet.CwRead()
 
@@ -239,6 +244,8 @@ class cwse_apdu_command:
     def se_trx_status(self):
         #self.connet.= CoolwalletClient(self.server, self.port)
         cmd = '80800000'
+        if self.apdu_CLA == 81:
+            cmd = '81800000'
         self.connet.CwWrite(cmd)
         return self.connet.CwRead()
 
@@ -247,14 +254,18 @@ class cwse_apdu_command:
     def se_trx_begin(self, AMOUNT, ENCOUTADDR):
         #self.connet.= CoolwalletClient(self.server, self.port)
         cmd = '80720000'
+        if self.apdu_CLA == 81:
+            cmd = '81720000'
         data = AMOUNT + ENCOUTADDR # 32 bytes + 48 bytes
-        self.connet.CwWrite(cmd)
+        self.connet.CwWrite(cmd, data)
         return self.connet.CwRead()
 
     #Get transaction signing context info
     def se_trx_get_ctxinfo(self, IN_ID):
         #self.connet.= CoolwalletClient(self.server, self.port)
         cmd = '8075' + IN_ID + '00'
+        if self.apdu_CLA == 81:
+            cmd = '8175' + IN_ID + '00'
         self.connet.CwWrite(cmd)
         return self.connet.CwRead()
 
@@ -262,6 +273,8 @@ class cwse_apdu_command:
     def se_trx_sign(self, IN_ID):
         #self.connet.= CoolwalletClient(self.server, self.port)
         cmd = '8074' + IN_ID + '00'
+        if self.apdu_CLA == 81:
+            cmd = '8174' + IN_ID + '00'
         self.connet.CwWrite(cmd)
         return self.connet.CwRead()
 
@@ -269,6 +282,8 @@ class cwse_apdu_command:
     def se_trx_finish(self):
         #self.connet.= CoolwalletClient(self.server, self.port)
         cmd = '80760000'
+        if self.apdu_CLA == 81:
+            cmd = '81760000'
         self.connet.CwWrite(cmd)
         return self.connet.CwRead()
 
@@ -325,6 +340,7 @@ class cwse_apdu_command:
     def se_hdw_next_trx_addr(self, KCID, ACCID):
         #self.connet.= CoolwalletClient(self.server, self.port)
         cmd = '80B7' + KCID + '00'
+        #cmd = '81B7' + KCID + '00'
         data = ACCID # 4 bytes
         self.connet.CwWrite(cmd, data)
         return self.connet.CwRead()
@@ -332,8 +348,10 @@ class cwse_apdu_command:
     #Prepare HDW trx signing
     def se_hdw_prep_trx_sign(self, IN_ID, KCID, ACCID, KID, BALNC, SIGMTRL, MAC):
         #self.connet.= CoolwalletClient(self.server, self.port)
-        cmd = '80B8' + IN_ID + KCID
+        #cmd = '80B8' + IN_ID + KCID
+        cmd = '81B8' + IN_ID + KCID
         data = ACCID + KID + BALNC + SIGMTRL + MAC  #4 bytes + 4 bytes + 32 bytes + 32 bytes + 32 bytes
+        #data = '00' * (4+4+8+32+32)
         self.connet.CwWrite(cmd, data)
         return self.connet.CwRead()
 
@@ -353,9 +371,22 @@ class cwse_apdu_command:
         self.connet.CwWrite(cmd, data)
         return self.connet.CwRead()
 
-    #Query HDW extended public key by BIP32 path
+    #Query HDW extended public key by BIP32 path, Add by Bob
     def se_hdw_qry_xpub(self, PURPOSE, COINTYPE='', ACC_VAL='', CHANGE='', index=''):
         cmd = '80BB0000'
         data = PURPOSE + COINTYPE + ACC_VAL + CHANGE + index # 4 + 4 + 4 + 4 + 4
         self.connet.CwWrite(cmd, data)
         return self.connet.CwRead()
+
+#MCU Command
+    
+    #Verify OTP
+    def mcu_verify_otp(self, OTP):
+        cmd = '8064'+'0000'
+        data = OTP
+        self.connet.CwWrite(cmd, data)
+        return self.connet.CwRead()
+
+#Change CLA
+    def change_apdu_CLA(self, CLA):
+        self.apdu_CLA = CLA

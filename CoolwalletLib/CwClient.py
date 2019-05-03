@@ -2,7 +2,7 @@
 # Coolwallet Client
 
 from .CwAPI import cwse_apdu_command
-from .tools.base58 import encode
+from .tools.base58 import encode, decode
 
 import sys
 import os
@@ -23,9 +23,11 @@ def Readkey():
     else:
         fr.seek(0, 0)
         data = fr.readline(1 + 6 + 16)
-        #print(data.hex()[:2])           # id
-        #print(data.hex()[2:2+12])       # otp
-        #print(data.hex()[2+12:2+12+32]) #login chlng
+        '''
+        print(data.hex()[:2])           # id
+        print(data.hex()[2:2+12])       # otp
+        print(data.hex()[2+12:2+12+32]) #login chlng
+        '''
         fr.close()
         return data
 
@@ -34,9 +36,14 @@ def analysisReData(data):
         print('Transport Failed')
         #return False
         sys.exit()
+
     if data[:2] == '66':
+        if data[-3:-1] == '24':
+            print('ERR_INTER_MODULE')
+            return 24
         print('error:', data)
         sys.exit()
+        #return None
     elif data[-6:-4] == '90':
         tmp = data[:-7].split(' ')
         result = ''
@@ -50,6 +57,7 @@ def analysisReData(data):
 def se_info(conn):
     ret = analysisReData(conn.se_get_mode_state())
     mode = ret[:2]
+    print('mode: ', end='')
     if mode == '00':
         print('[INIT]')
         return mode
@@ -80,14 +88,19 @@ def se_info(conn):
     #conn.se_get_basic_info()
 
 def BindReg(conn, hstCred, hstDesc):
-    print('========BindReg========')
-    # if mode not NOHOST(06), exit
-    if not se_info(conn) == '06':
-        print('MODE should be [NOHOST]')
+    print('\n========BindReg========')
+
+    # if mode is not NOHOST(06) or DISCONN(07), exit
+    mode = se_info(conn)
+    if mode == '06' or mode == '07':
+        pass
+    else:
+        print('MODE should be [NOHOST] or [DISCONN]')
+        print('====================================')
         return None 
 
     print('[se_bind_reg_init]')
-    firstHost = '01'
+    firstHost = '00' #if is first device set 01
     # hstHash = sha256(hstCred||hstDesc)
     sha256 = hashlib.sha256()
     sha256.update(hstCred)
@@ -125,7 +138,6 @@ def BindReg(conn, hstCred, hstDesc):
         print('Confirmed')
     elif ret[2:] == '01':
         print('Not Confirmed')
-        return None
 
     # save otp key for login
     try:
@@ -145,6 +157,7 @@ def BindLogin(conn, hstCred):
     # if mode not DISCONN(07), exit
     if not se_info(conn) == '07':
         print('MODE should be [DISCONN]')
+        print('========================')
         return None
 
     data = Readkey()
@@ -189,6 +202,15 @@ def BindLogin(conn, hstCred):
         #print('========BindLogin Done========')
         pass
 
+def BindLogout(conn):
+    print('\n========BindLogout========')
+    # if mode is 01 or 02 or 04
+    mode = se_info(conn)
+    if mode == '01' or mode == '02' or mode == '04':
+        analysisReData(conn.se_bind_logout())
+    se_info(conn)
+    print('========BindLogout Done========')
+
 def Bind_session_key(hostCred, Regotp, loginChlng, mtrl):
     ## otpKey = sha256(hstCred||otp)
     sha256 = hashlib.sha256()
@@ -226,15 +248,6 @@ def PersoSet(conn, data, hostCred, Regotp, loginChlng, mtrl):
     se_info(conn)
     print('========PersoSet Done========')
 
-def BindLogout(conn):
-    print('\n========BindLogout========')
-    # if mode is 01 or 02 or 04
-    mode = se_info(conn)
-    if mode == '01' or mode == '02' or mode == '04':
-        analysisReData(conn.se_bind_logout())
-    se_info(conn)
-    print('========BindLogout Done========')
-
 def InitWallet(conn, hwdName, hostCred):
     print('\n========InitWallet========')
     mode = se_info(conn)
@@ -245,7 +258,7 @@ def InitWallet(conn, hwdName, hostCred):
         print('MODE should be [NORMAL] or [AUTH]')
         return False
     # check HDW status
-    status = hdw_query_wallet_info(conn)
+    status = hdw_query_wallet_info(conn, '00')
     if status != '00': 
         print('HDW status should be [INACTIVE]')
         return False 
@@ -279,28 +292,16 @@ def InitWallet(conn, hwdName, hostCred):
     nameAscii = ''.join([r'%x' % ord(c) for c in hwdName]) # str to ascii hex str
     ret = conn.se_hdw_init_wallet(nameAscii, emkseed.hex(), mac.hex())
     result = analysisReData(ret)
-    #print('->bind_senck:', bind_senck.hex())
-    #print('->emkseed:', emkseed.hex())
-    #print('->mac:', mac.hex())
+
     print('========InitWallet Done========')
     return True
 
-def hdw_query_wallet_info(conn):
-    infoID = '00' # HDW status
+def hdw_query_wallet_info(infoID):
     ret = conn.se_hdw_qry_wa_info(infoID)
     return analysisReData(ret)
-'''
-    infoID = '01' # HDW name
-    ret = conn.se_hdw_qry_wa_info(infoID)
-    infoID = '02' # HDW account pointer
-    ret = conn.se_hdw_qry_wa_info(infoID)
-    infoID = '03' # all HDW
-    ret = conn.se_hdw_qry_wa_info(infoID)
-'''
 
-def hdw_create_account_test(conn):
+def hdw_create_account_test(conn, acc_id):
     print('\n========Create account========')
-    acc_id = '00000000'
     tmp = 'ikv_test'
     tmpAscii = ''.join([r'%x' % ord(c) for c in tmp])
     comp = 64 - len(tmpAscii)
@@ -309,8 +310,341 @@ def hdw_create_account_test(conn):
     result = analysisReData(ret)
     print('========Create account Done========')
 
-#path: BIP32 Derivation Path
+def hdw_query_account_info(conn, info_id, balance_format, acc_id):
+    print('\n========query account========')
+    ret = conn.se_hdw_qry_acc_info(info_id, balance_format, acc_id)
+    result = analysisReData(ret)
+    print('========query account Done========')
 
+def hdw_set_account_balance(conn, info_id, acc_id, hostCred, balance):
+    print('\n========Set account balance========')
+    
+    #balance = '00' * 3 + '00' + '0B' + 'EB' + 'C2' + '00' # 200,000,000 = 2BTC = 0xBEBC200
+    set_balance = '0' * (16 - len(format(balance, '02X'))) + format(balance, '02X')
+    
+
+    data = Readkey()
+    Regotp = data[1:1+6]
+    loginChlng = data[1+6:1+6+16]
+
+    mac = Bind_session_mac(bytes.fromhex(set_balance), hostCred, Regotp, loginChlng)
+
+    print('set account balance: ', set_balance)
+    print('MAC:', mac.hex())
+    ret = conn.se_hdw_set_acc_info(info_id, acc_id, set_balance, mac.hex())
+    result = analysisReData(ret)
+    print('========Set account balance Done========')
+
+
+def hdw_query_xpub(conn, path): # IN path : [2147483692, 2147483648, 2147483648]
+    hstCred = bytes(range(32))
+
+    #------------------------ parser path ------------------------
+    acc_purpose = '2c000080' #BIP43
+    acc_cointype = '01000080' # Bitcoin Testnet
+    acc_val = '00000080'
+    if len(path) > 1:
+        acc_purpose = path[0].to_bytes(4, 'little').hex()
+        acc_cointype = path[1].to_bytes(4, 'little').hex() 
+        acc_val = path[2].to_bytes(4, 'little').hex()
+    print(acc_purpose, acc_cointype, acc_val)
+
+    #------------------------ get pubkey ------------------------
+    ret = conn.se_hdw_qry_xpub(acc_purpose, acc_cointype, acc_val)
+
+    #------------------------ check mac ------------------------
+    rdata = bytes.fromhex(analysisReData(ret))
+    pubk = rdata[:64] # 64 bytes
+    chacode = rdata[64:64+32] # 32 bytes
+    fingerprint = rdata[64+32:64+32+4] # 4 bytes
+    rmac = rdata[64+32+4:64+32+4+32] # 32 bytes
+    #print(pubk.hex(), '\n', chacode.hex(), '\n', fingerprint.hex(), '\n', rmac.hex())
+
+    data = Readkey()
+    Regotp = data[1:1+6]
+    loginChlng = data[1+6:1+6+32]
+    mac = Bind_session_mac(rdata[:64+32+4], hstCred, Regotp, loginChlng)
+
+    if rmac != mac:
+        print('hdw_query_xpub --> mac failed')
+        print('hdw_query_xpub --> return MAC:', rmac.hex())
+        print('hdw_query_xpub --> my MAC:', mac.hex())
+        sys.exit()
+    print('hdw_query_xpub --> mac pass')
+
+    #------------------------ made ex_pubkey by hand ------------------------
+    version = '043587CF' #testnet public
+    depth = '03' # 1 byte ?
+    childnumber = '00' * 4  # 4 bytes
+    pubkey = pubk[:32] # 32 bytes
+    if int(pubk[32:].hex(), 16) % 2 == 0: # even
+        pubkey_y = '02' # 1 byte
+    else: # odd
+        pubkey_y = '03' # 1 byte
+
+    tmp = version + depth + fingerprint.hex() + childnumber + chacode.hex() + pubkey_y + pubkey.hex() # hex str
+    sha256 = hashlib.sha256()
+    sha256.update(bytes.fromhex(tmp))
+    checksum_tmp = sha256.digest()
+    
+    sha256 = hashlib.sha256()
+    sha256.update(checksum_tmp)
+    checksum = sha256.digest()
+
+    ex_pubkey = version + depth + fingerprint.hex() + childnumber + chacode.hex() + pubkey_y + pubkey.hex() + checksum[:4].hex() # hex str
+    #print(ex_pubkey)
+    #print(encode(bytes.fromhex(ex_pubkey)))
+    return encode(bytes.fromhex(ex_pubkey))
+
+
+def hdw_prep_trx_sign(conn, hostCred, acc_id, inputID, balance, trxHash):
+    print('\n========[se_hdw_prep_trx_sign]========')
+    se_info(conn)
+    KeyChain = '00'
+    key_id = '00000000'
+    print('Transaction input amount: ', balance)
+    print('Transaction Hash: ', trxHash)
+
+    data = Readkey()
+    Regotp = data[1:1+6]
+    loginChlng = data[1+6:1+6+16]
+
+    mac_value = bytes.fromhex(acc_id) + bytes.fromhex(key_id) + bytes.fromhex(balance) + bytes.fromhex(trxHash)
+    mac = Bind_session_mac(mac_value, hostCred, Regotp, loginChlng)
+    ret = conn.se_hdw_prep_trx_sign(inputID, KeyChain, acc_id, key_id, balance, trxHash, mac.hex())
+    result = analysisReData(ret)
+    if result == 24 :
+        conn.se_get_mod_err()
+    print('========[se_hdw_prep_trx_sign Done]========')
+
+
+def trx_begin(conn, hostCred, trxAmount, outAddr):
+    print('\n========[se_trx_begin Done]========')
+
+    data = Readkey()
+    Regotp = data[1:1+6]
+    loginChlng = data[1+6:1+6+16]
+    bind_senck = Bind_session_key(hostCred, Regotp, loginChlng, 'ENC')
+    cryptor = AES.new(bind_senck, AES.MODE_ECB)
+
+    outAddr_len = 48
+    if len(outAddr) % outAddr_len != 0:
+        padding_length = outAddr_len - (len(outAddr) % outAddr_len)
+        outAddr += b'\x00' * padding_length
+
+    enc_outAddr = cryptor.encrypt(outAddr)
+
+    print('Transaction amoun: ', trxAmount)
+    print('Encrypted output address: ', enc_outAddr.hex())
+    ret = conn.se_trx_begin(trxAmount, enc_outAddr.hex())
+    result = analysisReData(ret)
+    print('========[se_trx_begin Done]========')
+
+def trx_sign(conn, hostCred):
+    print('\n========[se_trx_sign]========')
+    inputID = '00'
+    ret = conn.se_trx_sign(inputID)
+    result = analysisReData(ret)
+
+    if len(result) < (64+32) * 2:
+        print("trx_sign Failed")
+        sys.exit()
+
+    sig = result[:64*2]
+    print('sig: ', sig)
+    sig_mac = result[64*2:]
+
+    data = Readkey()
+    Regotp = data[1:1+6]
+    loginChlng = data[1+6:1+6+16]
+
+    mac = Bind_session_mac(bytes.fromhex(sig), hostCred, Regotp, loginChlng)
+
+    if sig_mac != mac.hex():
+        print('hdw_query_xpub --> mac failed')
+        print('hdw_query_xpub --> sig MAC:', sig_mac)
+        print('hdw_query_xpub --> my MAC:', mac.hex())
+        sys.exit()
+    print('hdw_query_xpub --> mac pass')
+    print('========[se_trx_sign Done]========')
+    return sig
+
+def trx_finish(conn):
+    print('\n========[se_trx_finish]========')
+    ret = conn.se_trx_finish()
+    result = analysisReData(ret)
+    print('========[se_trx_finish Done]========')
+
+def get_ip():
+    with open(ip_path) as f:
+        data = json.load(f)
+        f.close()
+    ip = data['ip']
+    port = data['port']
+    print(ip, port)
+    return ip, port
+
+class CoolwalletClient:
+    """Coolwallet Client, a connection to a Trezor device.
+    """
+    def __init__(self):
+        with open(ip_path) as f:
+            data = json.load(f)
+            f.close()
+        self.ip = data['ip']
+        self.port = data['port']
+        self.hstCred = bytes(range(32))
+        self.hstDesc = bytes(range(32, 96))
+
+        self.conn = cwse_apdu_command(self.ip, self.port)
+        self.init_device(self.conn, self.hstCred, self.hstDesc)
+        
+        #return conn
+
+    def init_device(self, conn, hstCred, hstDesc):
+        #BindReg(conn, hstCred, hstDesc)
+        BindLogout(conn)
+        BindLogin(conn, hstCred)
+
+    def get_pubkey_at_path(self, path):
+        return hdw_query_xpub(self.conn, path)
+
+    def sign_tx(client, coin_name, inputs, outputs, details=None, prev_txes=None):
+        print("-------CoolwalletClient.sign_tx-------")
+        #TxCopyHashGen(client, coin_name, inputs, outputs, details, prev_txes)
+
+    def sign_tx_hash(self, txhash, input_amount, trx_amount, trx_addr):
+        print("-------CoolwalletClient.sign_tx_hash-------")
+        
+        acc_id = '00000000'
+        inputID = '00'
+
+        
+        
+        self.conn.change_apdu_CLA(81)
+        '''
+        se_info(self.conn)
+        self.conn.se_trx_status()
+        '''
+
+        trx_finish(self.conn)
+
+        inputbalance =  '0' * (16 - len(format(input_amount, '02x'))) + format(input_amount, '02x')
+        hdw_prep_trx_sign(self.conn, self.hstCred, acc_id, inputID, inputbalance, txhash)
+
+        trx_amount_form = '0' * (16 - len(format(trx_amount, '02x'))) + format(trx_amount, '02x')
+        print('trx_amount: ', trx_amount_form)
+        print('trx_addr: ', trx_addr)
+
+        trx_begin(self.conn, self.hstCred, trx_amount_form, decode(trx_addr))
+        #self.conn.se_trx_get_ctxinfo(inputID)
+
+        enter = input('\r\n[press the buttom on the card, then input enter]\r\n')
+        self.conn.se_trx_status()
+        self.conn.se_trx_status()
+        se_info(self.conn)
+        
+        sig = trx_sign(self.conn, self.hstCred)
+
+        trx_finish(self.conn)
+
+        print("-------CoolwalletClient.sign_tx_hash Done-------")
+        return sig
+
+    def sign_message(self, message, keypath):
+        raise NotImplementedError('The HardwareWalletClient base class does not '
+            'implement this method')
+
+    def display_address(self, keypath, p2sh_p2wpkh, bech32):
+        pass
+
+    def setup_device(self, hwdName, account_id):
+
+        #init wallet
+        if InitWallet(self.conn, hwdName, self.hstCred):
+        #create account
+            hdw_create_account_test(self.conn, account_id)
+        else: 
+            print('pass setup_device')
+
+        #--- set wallet account blance, and query it
+        hdw_set_account_balance(self.conn, '01', acc_id, self.hstCred, 400000000)
+        self.conn.se_hdw_qry_wa_info('03')
+        hdw_query_account_info(self.conn, '01', '01', acc_id)
+        
+        self.conn.se_hdw_next_trx_addr('00', acc_id)
+        hdw_query_account_info(self.conn, '02', '00', acc_id)
+
+    def wipe_device(self):
+        #back to nohost
+        pass
+
+    def close(self):
+        self.conn.close()
+
+
+
+
+
+
+
+
+#back up 
+class _cw_client:
+
+    def __init__(self):
+        #connet
+        with open(ip_path) as f:
+            data = json.load(f)
+        print(data['ip'])
+        print(data['port'])
+        self.conn = cwse_apdu_command(data['ip'], data['port'])
+        #self.conn = cwse_apdu_command('192.168.0.100', 9527)
+        f.close()
+        #self.conn = conn
+        #se_info(conn)
+        self.hstCred = bytes(range(32))
+        hstDesc = bytes(range(32, 96))
+        BindReg(self.conn, self.hstCred, hstDesc)
+        BindLogout(self.conn)
+        BindLogin(self.conn, self.hstCred)
+        #BindLogout(self.conn)
+
+    def get_pubkey_at_path(self, path=''):
+        _hdw_query_xpub(self.conn, self.hstCred)
+        pass
+
+    def sign_tx(self, tx):
+        pass
+
+    def sign_message(self, message, keypath):
+        raise NotImplementedError('The HardwareWalletClient base class does not '
+            'implement this method')
+
+    def display_address(self, keypath, p2sh_p2wpkh, bech32):
+        pass
+
+    def setup_device(self, hwdName):
+        #init wallet
+        if InitWallet(self.conn, hwdName, self.hstCred):
+        #create account
+            hdw_create_account_test(self.conn)
+        else: 
+            print('pass setup_device')
+
+    def wipe_device(self):
+        #back to nohost
+        pass
+
+    def close(self):
+        self.conn.close()
+        print('close HTTP connet')
+
+    def test(self):
+        se_info(self.conn)
+
+
+#path: BIP32 Derivation Path
 def _hdw_query_xpub(conn, hostCred):
     acc_purpose = '2c000080' # 44
     acc_cointype = '01000080' # Bitcoin Testnet
@@ -366,339 +700,3 @@ def _hdw_query_xpub(conn, hostCred):
     #print(ex_pubkey)
     print(encode(bytes.fromhex(ex_pubkey)))
     return {'xpub':encode(bytes.fromhex(ex_pubkey))}
-
-
-def hdw_query_xpub(conn, path): # IN path : [2147483692, 2147483648, 2147483648]
-
-    hstCred = bytes(range(32))
-    acc_purpose = path[0].to_bytes(4, 'little').hex() #'2c000080'
-    acc_cointype = '00000080'
-    acc_val = '00000000'
-    if len(path) > 1:
-        acc_purpose = path[0].to_bytes(4, 'little').hex()
-        acc_cointype = path[1].to_bytes(4, 'little').hex() # Bitcoin Testnet
-        acc_val = path[2].to_bytes(4, 'little').hex()
-
-    print(acc_purpose, acc_cointype, acc_val)
-    ret = conn.se_hdw_qry_xpub(acc_purpose, acc_cointype, acc_val)
-
-    rdata = bytes.fromhex(analysisReData(ret))
-    pubk = rdata[:64] # 64 bytes
-    chacode = rdata[64:64+32] # 32 bytes
-    fingerprint = rdata[64+32:64+32+4] # 4 bytes
-    rmac = rdata[64+32+4:64+32+4+32] # 32 bytes
-    #print(pubk.hex(), '\n', chacode.hex(), '\n', fingerprint.hex(), '\n', rmac.hex())
-
-    data = Readkey()
-    Regotp = data[1:1+6]
-    loginChlng = data[1+6:1+6+32]
-    mac = Bind_session_mac(rdata[:64+32+4], hstCred, Regotp, loginChlng)
-    #print('my MAC:', mac.hex())
-    if rmac != mac:
-        print('mac failed')
-        print('return MAC:', rmac.hex())
-        print('my MAC:', mac.hex())
-        sys.exit()
-    print('mac pass')
-
-    version = '043587CF' #testnet public
-    depth = '03' # 1 byte ?
-    childnumber = '00' * 4  # 4 bytes
-    pubkey = pubk[:32] # 32 bytes
-    if int(pubk[32:].hex(), 16) % 2 == 0: # even
-        pubkey_y = '02' # 1 byte
-    else: # odd
-        pubkey_y = '03' # 1 byte
-
-    tmp = version + depth + fingerprint.hex() + childnumber + chacode.hex() + pubkey_y + pubkey.hex() # hex str
-    sha256 = hashlib.sha256()
-    sha256.update(bytes.fromhex(tmp))
-    checksum_tmp = sha256.digest()
-    
-    sha256 = hashlib.sha256()
-    sha256.update(checksum_tmp)
-    checksum = sha256.digest()
-
-    ex_pubkey = version + depth + fingerprint.hex() + childnumber + chacode.hex() + pubkey_y + pubkey.hex() + checksum[:4].hex() # hex str
-    #print(ex_pubkey)
-    #print(encode(bytes.fromhex(ex_pubkey)))
-    return encode(bytes.fromhex(ex_pubkey))
-
-#TxCopyHashGen(client, coin_name, index, inputs, outputs, details=None, prev_txes=None):
-def TxCopyHashGen(client, coin_name, inputs, outputs, details=None, prev_txes=None):
-    ADDR_TO_PUBKEY_HASH_BASE = 0 
-    ADDR_TO_PUBKEY_HASH_ADDR = (ADDR_TO_PUBKEY_HASH_BASE + 0x01)
-    
-    ADDRESS_VERIFY_BASE = 0
-    ADDRESS_VERIFY_DECODE = (ADDRESS_VERIFY_BASE + 0x01)
-    ADDRESS_VERIFY_CHECKSUM = (ADDRESS_VERIFY_BASE + 0x02)
-
-    BASE58_DECODE_BASE = 0
-    NETWORK = 0x00
-
-    def doubleSha256(data): # in bytes, out bytes
-        sha256_1 = hashlib.sha256()
-        sha256_2 = hashlib.sha256()
-        sha256_1.update(data)
-        sha256_2.update(sha256_1.digest())
-        return sha256_2.digest()
-
-    def base58Decode(strdata): # in string, out bytes
-        byte_ret = decode(strdata)
-        #TODO: check inputdata is str, or convers
-        return BASE58_DECODE_BASE, byte_ret
-
-    def addrVerify(addr):
-        decode_ret = base58Decode(addr)
-        if decode_ret[0] != BASE58_DECODE_BASE or decode_ret[1][:1] != NETWORK:
-            return ADDRESS_VERIFY_DECODE
-
-        ret_hash = doubleSha256(decode_ret[1][:21]) # sz = 21
-        if decode_ret[1][21:] == ret_hash[:4]: # Compares 4 bytes
-            return ADDRESS_VERIFY_CHECKSUM
-        else:
-            return ADDRESS_VERIFY_BASE
-
-    def addrToPubKeyHash(addr):
-        buf = bytes(25)
-        if addrVerify(addr) != ADDRESS_VERIFY_BASE:
-            return ADDR_TO_PUBKEY_HASH_ADDR, buf
-
-        pubKeyHash = base58Decode(addr)[1][1:21] # sz = 20 bytes
-        return ADDR_TO_PUBKEY_HASH_BASE, pubKeyHash
-
-    def scriptPubPayToHash(addr):
-        #[25] {0x76,0xa9,0x14,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x88,0xac}
-        scriptPub = bytes([118,169,20,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,136,172])
-        ret = addrToPubKeyHash(addr)
-        if ret[0] == ADDR_TO_PUBKEY_HASH_BASE:
-            ret_scriptPub = scriptPub[:3] + ret[1] + scriptPub[23:]
-            return  ret_scriptPub # sz = 25 bytes
-        return scriptPub
-
-
-    # version no, 4 byte
-    hashdata += bytes.fromhex("%08d" % details.version)
-    print(hashdata)
-    # In-counter, 1 or 3 or 5 byte
-    hashdata += bytes.fromhex("%02d" % len(inputs))
-    print(hashdata)
-
-    # List of inputs
-    for vin in len(inputs):
-        # prehash, 32 byte
-        hashdata += inputs[vin].prev_hash
-        print(hashdata)
-        # index, 4 byte
-        hashdata += bytes.fromhex("%02d" % inputs[vin].prev_index)
-        print(hashdata)
-
-        if (vin == index):
-            # script len, 1 or 3 or 5 byte
-            hashdata += bytes.fromhex("%02d" % len(inputs[vin].script_sig))
-            print(hashdata)
-            # script, (script len) byte
-            hashdata += inputs[vin].script_sig
-            print(hashdata)
-        else:
-            # script len, 1 or 3 or 5 byte
-            hashdata += bytes.fromhex("00")
-            print(hashdata)
-
-        # sequence_no, 4 byte
-        hashdata += bytes.fromhex("ffffffff")
-        print(hashdata)
-    
-    # Out-counter, 1 or 3 or 5 byte
-    hashdata += bytes.fromhex("%02d" % len(outputs))
-    print(hashdata)
-
-    # List of outputs
-    for vout in len(outputs):
-        # value, 8 byte
-        hashdata += outputs[vout].amount
-        print(hashdata)
-        # script len, 1 or 3 or 5 byte
-        #hashdata += len(outputs[vout].address) 
-        hashdata += bytes.fromhex("25") # 25 in hex 
-        print(hashdata)
-        # script, (script len) byte
-        hashdata += scriptPubPayToHash(outputs[vout].address)
-        print(hashdata)
-
-    # sequence_no, 4 byte
-    hashdata += bytes.fromhex("%08d" % details.lock_time)
-    print(hashdata)
-    
-    # signature type: All, 4 byte
-    hashdata += bytes.fromhex("00000001")
-    print(hashdata)
-
-    #TODO: doublesha256
-    ret = doubleSha256(hashdata)
-    print(ret)
-
-def hdw_prep_trx_sign(conn, hostCred):
-    print('\n========se_hdw_prep_trx_sign========')
-    inputID = '00'
-    KeyChain = '00'
-    acc_id = '00000000'
-    key_id = '00000000'
-    balance = '0000000000000000'
-    trxHash = TxCopyHashGen()
-
-    data = Readkey()
-    Regotp = data[1:1+6]
-    loginChlng = data[1+6:1+6+16]
-
-    mac = Bind_session_mac(acc_id, hostCred, Regotp, loginChlng)
-
-    ret = conn.se_hdw_prep_trx_sign(inputID, KeyChain, acc_id, key_id, balance, trxHash, mac)
-    result = analysisReData(ret)
-    print('========se_hdw_prep_trx_sign Done========')
-
-def trx_begin(conn, hostCred):
-    print('\n========hdw_transaction_sign_begin========')
-    trxAmount = 'FF' * 8
-    outAddr = '035cc8348e75f8baa139a6863b9aae0f8973c98190a4ec010a800b9bd4b14b9d0e00'
-
-    data = Readkey()
-    Regotp = data[1:1+6]
-    loginChlng = data[1+6:1+6+16]
-    # bind_session_key(hostCred, Regotp, loginChlng, mtrl, OUT sessKey)
-    bind_senck = Bind_session_key(hostCred, Regotp, loginChlng, 'ENC')
-
-    # emkseed = AES-ECB(bind_senck, mkseed)
-    cryptor = AES.new(bind_senck, AES.MODE_ECB)
-    enc_outAddr = cryptor.encrypt(outAddr)
-
-    ret = conn.se_trx_begin(trxAmount, enc_outAddr)
-    result = analysisReData(ret)
-    print('========se_trx_begin Done========')
-
-def trx_sign(conn):
-    print('\n========se_trx_sign========')
-    inputID = '00'
-    ret = conn.se_trx_sign(inputID)
-    result = analysisReData(ret)
-    print('========se_trx_sign Done========')
-
-def trx_finish(conn):
-    print('\n========se_trx_finish========')
-    ret = conn.se_trx_finish()
-    result = analysisReData(ret)
-    print('========se_trx_finish Done========')
-
-
-class CoolwalletClient:
-    """Coolwallet Client, a connection to a Trezor device.
-    """
-    def __init__(self):
-        with open(ip_path) as f:
-            data = json.load(f)
-            f.close()
-        self.ip = data['ip']
-        self.port = data['port']
-        self.hstCred = bytes(range(32))
-        self.hstDesc = bytes(range(32, 96))
-
-        self.conn = cwse_apdu_command(self.ip, self.port)
-        self.init_device(self.conn, self.hstCred, self.hstDesc)
-        #return conn
-
-    def init_device(self, conn, hstCred, hstDesc):
-        BindReg(conn, hstCred, hstDesc)
-        BindLogout(conn)
-        BindLogin(conn, hstCred)
-
-    def setup_device(self, hwdName):
-        #init wallet
-        if InitWallet(self.conn, hwdName, self.hstCred):
-        #create account
-            hdw_create_account_test(self.conn)
-        else: 
-            print('pass setup_device')
-
-    def get_pubkey_at_path(self, path):
-        return hdw_query_xpub(self.conn, path)
-
-    def sign_tx(self, tx):
-        TxCopyHashGen()
-        pass
-
-    def sign_message(self, message, keypath):
-        raise NotImplementedError('The HardwareWalletClient base class does not '
-            'implement this method')
-
-    def display_address(self, keypath, p2sh_p2wpkh, bech32):
-        pass
-
-    def setup_device(self, hwdName):
-        #init wallet
-        if InitWallet(self.conn, hwdName, self.hstCred):
-        #create account
-            hdw_create_account_test(self.conn)
-        else: 
-            print('pass setup_device')
-
-    def wipe_device(self):
-        #back to nohost
-        pass
-
-    def close(self):
-        self.conn.close()
-
-
-class _cw_client:
-
-    def __init__(self):
-        #connet
-        with open(ip_path) as f:
-            data = json.load(f)
-        print(data['ip'])
-        print(data['port'])
-        self.conn = cwse_apdu_command(data['ip'], data['port'])
-        #self.conn = cwse_apdu_command('192.168.0.100', 9527)
-        f.close()
-        #self.conn = conn
-        #se_info(conn)
-        self.hstCred = bytes(range(32))
-        hstDesc = bytes(range(32, 96))
-        BindReg(self.conn, self.hstCred, hstDesc)
-        BindLogout(self.conn)
-        BindLogin(self.conn, self.hstCred)
-        #BindLogout(self.conn)
-
-    def get_pubkey_at_path(self, path=''):
-        _hdw_query_xpub(self.conn, self.hstCred)
-        pass
-
-    def sign_tx(self, tx):
-        pass
-
-    def sign_message(self, message, keypath):
-        raise NotImplementedError('The HardwareWalletClient base class does not '
-            'implement this method')
-
-    def display_address(self, keypath, p2sh_p2wpkh, bech32):
-        pass
-
-    def setup_device(self, hwdName):
-        #init wallet
-        if InitWallet(self.conn, hwdName, self.hstCred):
-        #create account
-            hdw_create_account_test(self.conn)
-        else: 
-            print('pass setup_device')
-
-    def wipe_device(self):
-        #back to nohost
-        pass
-
-    def close(self):
-        self.conn.close()
-        print('close HTTP connet')
-
-    def test(self):
-        se_info(self.conn)
-
