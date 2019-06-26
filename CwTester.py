@@ -113,19 +113,48 @@ def se_info(conn):
         print('[DISCONN]')
         return mode
 
+def getModeState(conn):
+    ret = analysisReData(conn.se_get_mode_state())
+    mode = ret[:2]
+    print('mode: ', end='')
+    if mode == '00':
+        print('[INIT]')
+        return mode
+    elif mode == '01':
+        print('[PERSO]')
+        return mode
+    elif mode == '02':
+        print('[NORMAL]')
+        return mode
+    elif mode == '03':
+        print('[AUTH]')
+        return mode
+    elif mode == '04':
+        print('[LOCK]')
+        return mode
+    elif mode == '05':
+        print('[ERROR]')
+        return mode
+    elif mode == '06':
+        print('[NOHOST]')
+        return mode
+    elif mode == '07':
+        print('[DISCONN]')
+        return mode
 
 def BindRegTest(conn, hstCred, hstDesc):
     print('\n========BindRegTest========')
-    ret = conn.se_get_mode_state()
-    ret = analysisReData(ret)
-    if not ret[:2] == '06':
-        print('mode: DISCONN')
-        return None #sys.exit()
+    # if mode is not NOHOST(06) or DISCONN(07), exit
+    mode = getModeState(conn)
+    if mode == '06' or mode == '07':
+        pass
+    else:
+        print('MODE should be [NOHOST] or [DISCONN]')
+        print('====================================')
+        return None 
     
     print('\n[se_bind_reg_init]')
     firstHost = '01'
-    #print('hstCred:', hstCred.hex(), type(hstCred))
-    #print('hstDesc:', hstDesc.hex(), type(hstDesc))
     sha256 = hashlib.sha256()
     sha256.update(hstCred)
     sha256.update(hstDesc)
@@ -140,8 +169,10 @@ def BindRegTest(conn, hstCred, hstDesc):
 
     print('\n[se_bind_reg_chlng]')
     ret = conn.se_bind_reg_chlng(brHandle)
+    if not ret:
+        ret = conn.se_bind_reg_chlng(brHandle)
     chlng = analysisReData(ret)
-    #print('chlng:', chlng)
+    print('chlng:', chlng)
     
     print('\n[se_bind_reg_finish]')
     # otpKey = SHA256(hstCred||OTP)
@@ -282,6 +313,12 @@ def InitWallet_test(conn, hwdName, hostCred):
         print('hwdName len should be 32, hwdName:', len(hwdName))
         sys.exit()
 
+    BIP39_Seed = "5390c201d64e9c303da7cd85a36a2a0d010a55904508415a02f08bef59fd51db81ba5d632817ad199da9bc77d11da485f0a20ae8f787da2e0cba61aab1306633"
+    BIP39_Seed_byte = bytes.fromhex(BIP39_Seed)
+    print(BIP39_Seed_byte)
+    sys.exit()
+
+
     mkseed = bytes([120, 49, 137, 155, 199, 15, 221, 96,
                     109, 154, 230, 172, 68, 226, 82, 34,
                     225, 127, 216, 200, 239, 106, 4, 27, 
@@ -394,11 +431,11 @@ def hdw_query_xpub_test(conn, hostCred):
 
 if __name__ == '__main__':
     T_CwHttpTransport = False
-    T_CwAPI = False
+    T_CwAPI = True
     T_CwAPI_FUNC = False
-    T_CwClient = True
+    T_CwClient = False
 
-    print('----------CwTester----------')
+    print('[CwTester]')
     with open('CoolwalletLib/tools/ip.config') as f:
         data = json.load(f)
         f.close()
@@ -441,6 +478,7 @@ if __name__ == '__main__':
 
         hdw_query_wallet_info(conn4)
         InitWallet_test(conn4, hwdName, hstCred)
+
         hdw_create_account_test(conn4)
         hdw_query_wallet_info(conn4)
 
@@ -450,84 +488,88 @@ if __name__ == '__main__':
 
 #CoolwalletLib.CwAPI Test
     if T_CwAPI:
-        print('CwAPI test')
+        print('[CoolwalletLib.CwAPI]')
         conn2 = cwse_apdu_command(data['ip'], data['port'])
-
+        
         print('#SE Information')
-        conn2.se_get_mode_state()
-        conn2.se_get_fw_version()
-        conn2.se_get_unique_id()
-        conn2.se_get_mod_err()
-        conn2.se_get_basic_info()
-
-        print('#Host Binding')
-        hostCred = '11' * 32 # 32 bytes
-        hostDesc = '22' * 64
-        HASH = '11' * 32
+        print('Test [se_get_mode_state]:', conn2.se_get_mode_state())
+        print('Test [se_get_fw_version]:', conn2.se_get_fw_version())
+        print('Test [se_get_unique_id]:', conn2.se_get_unique_id())
+        print('Test [se_get_mod_err]:', conn2.se_get_mod_err())
+        print('Test [se_get_basic_info]:', conn2.se_get_basic_info())
+            
+        print('\n#Host Binding')
+        hostCred = '00' * 32 # 32 bytes
+        hostDesc = '00' * 64
+        HASH = '00' * 32
         BRHANDLE = '00' * 4
-        BRHANDLE = '00' * 4
-        REGRESP = '11' * 16
-        PINRESP = '33' * 16
-        HST_ID = '00'
-        HSTCRED = '00' * 32
+        REGRESP = '00' * 16
         PINRESP = '00' * 16
+        HST_ID = '00'
+        BINDRESP = '00' * 16
+        HSTCRED = '00' * 32
         PINHASH = '00' * 32
 
-        conn2.se_bind_reg_init('00', hostCred, hostDesc, HASH)
-        conn2.se_bind_reg_chlng(BRHANDLE)
-        conn2.se_bind_reg_finish(BRHANDLE, REGRESP, PINRESP)
-        conn2.se_bind_reg_info(HST_ID)
-        conn2.se_bind_reg_approve(HST_ID)
-        conn2.se_bind_reg_remove(HST_ID)
-        conn2.se_bind_login_chlng(HST_ID)
-        conn2.se_bind_login(HST_ID, resp_data)
-        conn2.se_bind_logout()
-        conn2.se_bind_find_hst_id(HSTCRED)
-        conn2.se_bind_back_nohost(PINRESP, PINHASH)
+        print('Test [se_bind_reg_init]:', conn2.se_bind_reg_init('00', hostCred, hostDesc, HASH))
+        print('Test [se_bind_reg_chlng]:', conn2.se_bind_reg_chlng(BRHANDLE))
+        print('Test [se_bind_reg_finish with PINRESP]:', conn2.se_bind_reg_finish(BRHANDLE, REGRESP, PINRESP))
+        print('Test [se_bind_reg_finish]:', conn2.se_bind_reg_finish(BRHANDLE, REGRESP))
+        
+        print('Test [se_bind_reg_info]:', conn2.se_bind_reg_info(HST_ID))
+        print('Test [se_bind_reg_approve]:', conn2.se_bind_reg_approve(HST_ID))
+        print('Test [se_bind_reg_remove]:', conn2.se_bind_reg_remove(HST_ID))
+        
+        print('Test [se_bind_login_chlng]:', conn2.se_bind_login_chlng(HST_ID))
+        print('Test [se_bind_login]:', conn2.se_bind_login(HST_ID, BINDRESP))
+        print('Test [se_bind_logout]:', conn2.se_bind_logout())
 
-        print('#Personalization')
+        print('Test [se_bind_find_hst_id]:', conn2.se_bind_find_hst_id(HSTCRED))
+        print('Test [se_bind_back_nohost]:', conn2.se_bind_back_nohost(PINRESP, PINHASH))
+
+        print('\n#Personalization')
         PDID = '00'
-        PERDATA = '1' *  8
-        PDMAC = '2' * 64
-        PINHASH = '1' * 64
-        conn2.se_perso_set_data(PDID, PERDATA, PDMAC)
-        conn2.se_perso_get_data_hash(PDID)
-        conn2.se_perso_confirm()
-        conn2.se_perso_back_perso(PINHASH)
+        PERDATA = '00' *  4
+        PDMAC = '00' * 32
+        PINHASH = '00' * 32
+        print('Test [se_perso_set_data]:', conn2.se_perso_set_data(PDID, PERDATA, PDMAC))
+        print('Test [se_perso_get_data_hash]:', conn2.se_perso_get_data_hash(PDID))
+        print('Test [se_perso_confirm]:', conn2.se_perso_confirm())
+        print('Test [se_perso_back_perso]:', conn2.se_perso_back_perso(PINHASH))
+        
+        
+        print('\n#Authentication')
+        PINRESP = '00' * 16
+        WRPINHASH = '00' * 32
+        MAC = '00' * 32
+        print('Test [se_pin_chlng]:', conn2.se_pin_chlng())
+        print('Test [se_pin_auth]:', conn2.se_pin_auth(PINRESP))
+        print('Test [se_pin_change]:', conn2.se_pin_change(WRPINHASH, MAC))
+        print('Test [se_pin_logout]:', conn2.se_pin_logout())
 
-        print('#Authentication')
-        PINRESP = '0' * 32
-        WRPINHASH = '1' * 64
-        MAC = '2' * 64
-        conn2.se_pin_chlng()
-        conn2.se_pin_auth(PINRESP)
-        conn2.se_pin_change(WRPINHASH, MAC)
-        conn2.se_pin_logout()
+        print('\n#BCDC Setting')
+        CARDNAME = '00' * 32
+        SECPO = '00' * 4
+        print('Test [se_get_card_name]:', conn2.se_get_card_name())
+        print('Test [se_set_card_name]:', conn2.se_set_card_name(CARDNAME))
+        print('Test [se_get_secpo]:', conn2.se_get_secpo())
+        print('Test [se_set_secpo]:', conn2.se_set_secpo(SECPO))
 
-        print('#BCDC Setting')
-        CARDNAME = '1' * 64
-        SECPO = '2' * 8
-        conn2.se_get_card_name()
-        conn2.se_set_card_name(CARDNAME)
-        conn2.se_get_secpo()
-        conn2.se_set_secpo(SECPO)
-
-        print('#Transaction Signing')
-        AMOUNT = '0' * 32 * 2
-        ENCOUTADDR = '1' * 48 * 2
+        print('\n#Transaction Signing')
+        AMOUNT = '00' * 32
+        ENCOUTADDR = '00' * 48
         IN_ID = '01'
-        conn2.se_trx_status()
-        conn2.se_trx_begin(AMOUNT, ENCOUTADDR)
-        conn2.se_trx_get_ctxinfo(IN_ID)
-        conn2.se_trx_sign(IN_ID)
-        conn2.se_trx_finish()
-
-        print('#HD Wallet')
-        HDWNAME = '0' * 32 * 2
-        EMKSEED = '1' * 64 * 2
-        MAC = '2' * 32 * 2
+        print('Test [se_trx_status]:', conn2.se_trx_status())
+        print('Test [se_trx_begin]:', conn2.se_trx_begin(AMOUNT, ENCOUTADDR))
+        print('Test [se_trx_get_ctxinfo]:', conn2.se_trx_get_ctxinfo(IN_ID))
+        print('Test [se_trx_sign]:', conn2.se_trx_sign(IN_ID))
+        print('Test [se_trx_finish]:', conn2.se_trx_finish())
+        
+        print('\n#HD Wallet')
+        HDWNAME = '00' * 32
+        EMKSEED = '00' * 64
+        MAC = '00' * 32
         INFOID = '00'
-        HDWINFO = '1' * 32 * 2
+        HDWINFO = '00' * 32
 
         conn2.se_hdw_init_wallet(HDWNAME, EMKSEED, MAC)
         conn2.se_hdw_qry_wa_info(INFOID)
@@ -542,11 +584,7 @@ if __name__ == '__main__':
         '''
 #CoolwalletLib.CwHttpTransport Test
     if T_CwHttpTransport:
-        print('CwHttpTransport test 80100000')
-        ip = input('ip: ')
-        port = input('port: ')
-        conn1 = CoolwalletClient(ip, port)
-        conn1.CwWrite('80100000', '')
-        conn1.CwRead()
-    else:
-        pass
+        print('[CoolwalletLib.CwHttpTransport] test CMD:80100000')
+        conn1 = CoolwalletClient(data['ip'], data['port'])
+        conn1.CwWrite('80100000')
+        print(conn1.CwRead())
