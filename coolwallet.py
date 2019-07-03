@@ -5,11 +5,11 @@ from ..base58 import get_xpub_fingerprint, decode, encode, to_address, xpub_main
 from ..serializations import ser_uint256
 from .. import bech32
 
-from trezorlib import protobuf, tools, btc
-from trezorlib import messages as proto
+from .trezorlib import protobuf, tools, btc
+from .trezorlib import messages as proto
 
-from CoolwalletLib.CwClient import CoolwalletClient as Coolwallet
-from CoolwalletLib.CwClient import get_ip
+from .CoolwalletLib.CwClient import CoolwalletClient as Coolwallet
+from .CoolwalletLib.CwClient import get_ip
 
 from bitcoin import SelectParams
 from bitcoin.core import b2x, lx, COIN, COutPoint, CMutableTxOut, CMutableTxIn, CMutableTransaction, Hash160, x
