@@ -2,7 +2,7 @@
 # Coolwallet Client
 
 from .CwAPI import cwse_apdu_command
-from .tools.base58 import encode, decode
+from hwilib.base58 import encode, decode
 
 import sys
 import os
