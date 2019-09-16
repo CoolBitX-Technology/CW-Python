@@ -11,9 +11,12 @@ import hashlib
 import hmac
 from Crypto.Cipher import AES
 import logging
+from typing import List, NewType
+import enum
 
 key_path = os.path.join(os.path.dirname(__file__), "tools/key.bin")
 ip_path = os.path.join(os.path.dirname(__file__), "tools/ip.config")
+seed_path = os.path.join(os.path.dirname(__file__), "tools/seed")
 
 Client_log = logging.getLogger( __name__ )
 Client_log.setLevel(logging.WARNING)
@@ -245,7 +248,7 @@ def PersoSet(conn, data, hostCred, Regotp, loginChlng, mtrl):
     Client_log.info('[2][se_perso_confirm]')
     analysisReData(conn.se_perso_confirm())
 
-def InitHDWallet(conn, HDWName, hostCred, seed=''):
+def InitHDWallet(conn, HDWName, hostCred, seed):
     Client_log.info('[InitHDWallet]')
 
     # check mode
@@ -266,11 +269,6 @@ def InitHDWallet(conn, HDWName, hostCred, seed=''):
         
     if len(HDWName) != 32:
         raise ValueError('[InitHDWallet] HDWName len should be 32, len(HDWName):' + len(HDWName))
-
-    default_seed = "2b1d2cff928c21e40932d67113d746bb82b3d67c0ccd757d1aa1049f4523818f45b2620e1cb40ff2bcef30ff34df0e92d900c95701923a1260c778821e033f29"
-    
-    if seed == '':
-        seed = default_seed
 
     seed = bytes.fromhex(seed)
 
@@ -299,8 +297,8 @@ def InitHDWallet(conn, HDWName, hostCred, seed=''):
     else:
         raise ValueError('[InitHDWallet] init failed')
 
-def HDWQryAccKeyinfo(conn, accountID, keyChainID, KeyID):
-    Client_log.info('[HDWQryAccKeyinfo]')
+def HDWQryAccKeyinfo_dev(conn, accountID, keyChainID, KeyID):
+    Client_log.info('[HDWQryAccKeyinfo_dev]')
 
     ret = analysisReData(conn.se_hdw_qry_acc_keyinfo('00', keyChainID, accountID, KeyID))
     Client_log.info('Address(25 Byte): %s', ret[:25*2])
@@ -338,10 +336,11 @@ def HDWNextTrxAddress(conn, keyChain_id, acc_id):
     Client_log.info('[HDWNextTrxAddress]')
 
     result = analysisReData(conn.se_hdw_next_trx_addr(keyChain_id, acc_id))
-    Client_log.debug('[Path]: account ID: %s', acc_id, \
-                    'key chain ID: %s', keyChain_id, \
-                    'key ID: %s', result[:8], \
-                    '\nAddress: %s', result[8:8+50])
+
+    Client_log.debug('[Path]: account ID: %s', acc_id)
+    Client_log.debug('[Path]: key chain ID: %s', keyChain_id)
+    Client_log.debug('[Path]: key ID: %s', result[:8])
+    Client_log.debug('[Path]: Address: %s', result[8:8+50])
 
 def HDWQryXpub(conn, path, hstCred): 
     # IN path like : [2147483692, 2147483648, 2147483648]
@@ -553,6 +552,95 @@ def get_ip():
     except Exception as e:
         raise ValueError(e)
 
+HARDENED_FLAG = 1 << 31
+Address = NewType("Address", List[int])
+
+def H_(x: int) -> int:
+    """
+    Shortcut function that "hardens" a number in a BIP44 path.
+    """
+    return x | HARDENED_FLAG
+
+def parse_BIP32_path(nstr: str):
+    if not nstr:
+        return []
+
+    n = nstr.split("/")
+
+    if n[0] == "m":
+        n = n[1:]
+
+    def str_to_harden(x: str) -> int:
+        if x.startswith("-"):
+            return H_(abs(int(x)))
+        elif x.endswith(("h", "'")):
+            return H_(int(x[:-1]))
+        else:
+            return int(x)
+
+    try:
+        return [str_to_harden(x) for x in n]
+    except Exception:
+        raise ValueError("Invalid BIP32 path", nstr)
+
+
+class InputScriptType(enum.IntEnum):
+    SPENDADDRESS = 0
+    SPENDMULTISIG = 1
+    EXTERNAL = 2
+    SPENDWITNESS = 3
+    SPENDP2SHWITNESS = 4
+
+class OutputScriptType(enum.IntEnum):
+    PAYTOADDRESS = 0
+    PAYTOSCRIPTHASH = 1
+    PAYTOMULTISIG = 2
+    PAYTOOPRETURN = 3
+    PAYTOWITNESS = 4
+    PAYTOP2SHWITNESS = 5
+
+class TxInputStruct:
+    def __init__(
+        self,
+        address_n: List[int] = None,
+        prev_hash: bytes = None,
+        prev_index: int = None,
+        script_sig: bytes = None,
+        sequence: int = None,
+        script_type: int = None,
+        amount: int = None,
+    ) -> None:
+        self.address_n = address_n if address_n is not None else []
+        self.prev_hash = prev_hash
+        self.prev_index = prev_index
+        self.script_sig = script_sig
+        self.sequence = sequence
+        self.script_type = script_type
+        self.amount = amount
+
+class TxOutputStruct:
+    def __init__(
+        self,
+        address: str = None,
+        address_n: List[int] = None,
+        amount: int = None,
+        script_type: int = None,
+    ) -> None:
+        self.address = address
+        self.address_n = address_n if address_n is not None else []
+        self.amount = amount
+        self.script_type = script_type
+
+class TxSignStruct:
+    def __init__(
+        self,
+        version: int = None,
+        lock_time: int = None,
+    ) -> None:
+        self.version = version
+        self.lock_time = lock_time
+
+
 class CoolwalletClient:
     """Coolwallet Client, a connection to a Trezor device.
     """
@@ -571,44 +659,24 @@ class CoolwalletClient:
 
         self.conn = cwse_apdu_command(self.ip, self.port)
         self.init_device(self.conn)
-        #self.init_device_develop(self.conn)
         
     def init_device(self, conn):
-        # 1. check CW not the first host
-        host_id = '00'
-        state = BindInfo(conn, host_id)
-        if state != '02': # Confirmed state
-            raise ValueError('[init_device] plz register and approve from the first host')
-
-        # 2. register new host
-        host_id = '01'
-        state = BindInfo(conn, host_id)
-        if state == '00':   # Empty state -> registered
-            # fisrt_reg must be False
-            BindReg(conn, False, self.hstCred, self.hstDesc)
-            BindLogout(conn)
-            BindLogin(conn, self.hstCred)
-
-        elif state == '01': # Registered state -> approve
-            raise ValueError('[init_device] not supported approve function, plz approve from the first host')
-
-        else:               # Confirmed state -> skip
-            BindLogout(conn)
-            BindLogin(conn, self.hstCred)
-
-    def init_device_develop(self, conn):
-        print('--------------------------------- [CW] init_device_develop ---------------------------------')
+        # state 00 (Empty)      -> setup
+        # state 01 (Registered) -> reject
+        # state 02 (Confirmed)  -> login
         state = BindInfo(conn, '00')
-        if state == '00':
-            BindReg(conn, True, self.hstCred, self.hstDesc)
-            BindLogout(conn)
-            BindLogin(conn, self.hstCred)
+       if state == '00':
+            self.setup_device()
+            print('4.1 init_device -> setup_device')
+            return {'success': True}
         elif state == '01':
-            raise False
-        else:
+            raise ValueError('[init_device] Registered, wrong bind state')
+        elif state == '02':
             BindLogout(conn)
             BindLogin(conn, self.hstCred)
-        print('--------------------------------- [CW] init_device_develop Done ---------------------------------')
+            return {'success': True}
+        else:
+            raise ValueError('[init_device] Unknow state, [state]' + state)
 
     def get_pubkey_at_path(self, path):
         return HDWQryXpub(self.conn, path, self.hstCred)
@@ -694,35 +762,69 @@ class CoolwalletClient:
 
     def setup_device(self):
         Client_log.info('[setup_device]')  
-        # user should creat HDWallet first at the APP, check HDW status is not [INACTIVE]
-        status = analysisReData(self.conn.se_hdw_qry_wa_info('00'))
-        Client_log.debug('[status]: %s', status) 
-        if status == '00': 
-            raise ValueError('[setup_device] HDW status should be [ACTIVE]')
+        name = 'ikv-wallet-mainnet'
+        HDW_name = name + ' ' * (32 - len(name))        
+        account_id = '{:0>8d}'.format(0)        
+        account_name = 'ikv-account-0'
 
-    def setup_device_develop(self, HDW_name, account_id, account_name):
-        print("--------------------------------- [CW] CoolwalletClient setup_device_develop ---------------------------------") 
-        
-        # creat HDWallet and creat account
-        if InitHDWallet(self.conn, HDW_name, self.hstCred):
-            HDWCreatAccount(self.conn, account_id, account_name)
-        
-        # set wallet account blance, and query it
-        account_balance = 2221600
-        HDWSetAccBalance(self.conn, '01', account_id, self.hstCred, account_balance)
-        
-        Client_log.info('[se_hdw_qry_wa_info]')
-        self.conn.se_hdw_qry_acc_info('00', '00', account_id)
-        self.conn.se_hdw_qry_acc_info('01', '01', account_id)
-        self.conn.se_hdw_qry_acc_info('02', '00', account_id)
-        self.conn.se_hdw_qry_acc_info('03', '00', account_id)
+        # 1. BindInfo
+        # state 00 (Empty)      -> regist device -> BindLogin
+        # state 01 (Registered) -> reject
+        # state 02 (Confirmed)  -> do not setup_device
+        state = BindInfo(self.conn, '00')        
+        if state == '00':
+            BindReg(self.conn, True, self.hstCred, self.hstDesc)
+            BindLogout(self.conn)
+            BindLogin(self.conn, self.hstCred)
+        elif state == '01':
+            raise ValueError('[setup_device] Registered, wrong bind state')
+        elif state == '02':
+            # do not setup_device
+            pass
+        else:
+            raise ValueError('[setup_device] Unknow bind state, [state]' + state)
 
-        '''
+        # 2. se_hdw_qry_wa_info(state)
+        # state 00 (Inactive)   -> InitHDWallet
+        # state 01 (Waitactive) -> reject
+        # state 02 (Active)     -> pass
+        getModeState(self.conn)
+        waState = analysisReData(self.conn.se_hdw_qry_wa_info('00'))
+        Client_log.debug('[waState]: %s', waState) 
+
+        if waState == '00':
+            with open(seed_path, 'r') as file:
+                seed = file.read()
+                file.close()
+            # creat HDWallet and creat account
+            if InitHDWallet(self.conn, HDW_name, self.hstCred, seed):
+                HDWCreatAccount(self.conn, account_id, account_name)
+
+            # set wallet account blance, and query it
+            account_balance = 9999999999
+            HDWSetAccBalance(self.conn, '01', account_id, self.hstCred, account_balance)
+
+            Client_log.info('[se_hdw_qry_acc_info]')
+            self.conn.se_hdw_qry_acc_info('00', '00', account_id)
+            self.conn.se_hdw_qry_acc_info('01', '01', account_id)
+            self.conn.se_hdw_qry_acc_info('02', '00', account_id)
+            self.conn.se_hdw_qry_acc_info('03', '00', account_id)
+
+        elif waState == '01':
+            raise ValueError('[setup_device] Waitactive, wrong wallet state')
+        elif waState == '02':
+            # do not InitHDWallet
+            pass
+        else:
+            raise ValueError('[setup_device] Unknow wallet state, [state]' + state)
+
+        # query key
         keyChainID = '01'
-        KeyID = '14000000'
-        HDWQryAccKeyinfo(self.conn, account_id, keyChainID, KeyID)
-        '''
-        print("--------------------------------- [CW] CoolwalletClient setup_device_develop done ---------------------------------")        
+        KeyID = '00000000'
+        HDWNextTrxAddress(self.conn, keyChainID, KeyID)
+        HDWQryAccKeyinfo_dev(self.conn, account_id, keyChainID, KeyID)
+
+        return {'success': True}
 
     def wipe_device(self):
         #back to nohost

@@ -5,11 +5,8 @@ from ..base58 import get_xpub_fingerprint, decode, encode, to_address, xpub_main
 from ..serializations import ser_uint256
 from .. import bech32
 
-from .trezorlib import protobuf, tools, btc
-from .trezorlib import messages as proto
-
-from .CoolwalletLib.CwClient import CoolwalletClient as Coolwallet
-from .CoolwalletLib.CwClient import get_ip
+from .CoolwalletLib.CwClient import CoolwalletClient as Coolwallet, get_ip, parse_BIP32_path
+from .CoolwalletLib.CwClient import TxInputStruct, TxOutputStruct, TxSignStruct, InputScriptType, OutputScriptType
 
 from bitcoin import SelectParams
 from bitcoin.core import b2x, lx, COIN, COutPoint, CMutableTxOut, CMutableTxIn, CMutableTransaction, Hash160, x
@@ -74,7 +71,7 @@ class CoolwalletClient(HardwareWalletClient):
     # Retrieves the public key at the specified BIP 32 derivation path
     def get_pubkey_at_path(self, path):
         # convert BIP32 path string to list of uint32 int
-        expanded_path = tools.parse_path(path)
+        expanded_path = parse_BIP32_path(path)
         output = Coolwallet.get_pubkey_at_path(self.client, expanded_path) 
         if self.is_testnet:
             return {'xpub':xpub_main_2_test(output)}
@@ -91,7 +88,7 @@ class CoolwalletClient(HardwareWalletClient):
         # Prepare inputs
         inputs = []
         for psbt_in, txin in zip(tx.inputs, tx.tx.vin):
-            txinputtype = proto.TxInputType()
+            txinputtype = TxInputStruct()
 
             # Set the input stuff
             txinputtype.prev_hash = ser_uint256(txin.prevout.hash)[::-1]
@@ -100,15 +97,15 @@ class CoolwalletClient(HardwareWalletClient):
 
             # Detrermine spend type
             if psbt_in.non_witness_utxo:
-                txinputtype.script_type = proto.InputScriptType.SPENDADDRESS
+                txinputtype.script_type = InputScriptType.SPENDADDRESS
                 #print('SPEND_ADDRESS')
             elif psbt_in.witness_utxo:
                 # Check if the output is p2sh
                 if psbt_in.witness_utxo.is_p2sh():
-                    txinputtype.script_type = proto.InputScriptType.SPENDP2SHWITNESS
+                    txinputtype.script_type = InputScriptType.SPENDP2SHWITNESS
                     print('SPEND_P2SH_WITNESS')
                 else:
-                    txinputtype.script_type = proto.InputScriptType.SPENDWITNESS
+                    txinputtype.script_type = InputScriptType.SPENDWITNESS
                     print('SPEND_WITNESS')
 
             # Check for 1 key
@@ -149,9 +146,9 @@ class CoolwalletClient(HardwareWalletClient):
         # prepare outputs
         outputs = []
         for out in tx.tx.vout:
-            txoutput = proto.TxOutputType()
+            txoutput = TxOutputStruct()
             txoutput.amount = out.nValue
-            txoutput.script_type = proto.OutputScriptType.PAYTOADDRESS
+            txoutput.script_type = OutputScriptType.PAYTOADDRESS
             if out.is_p2pkh():
                 txoutput.address = to_address(out.scriptPubKey[3:23], p2pkh_version)
             elif out.is_p2sh():
@@ -167,33 +164,9 @@ class CoolwalletClient(HardwareWalletClient):
             outputs.append(txoutput)
 
         # Prepare prev txs
-        prevtxs = {}
-        for psbt_in in tx.inputs:
-            if psbt_in.non_witness_utxo:
-                prev = psbt_in.non_witness_utxo
-
-                t = proto.TransactionType()
-                t.version = prev.nVersion
-                t.lock_time = prev.nLockTime
-
-                for vin in prev.vin:
-                    i = proto.TxInputType()
-                    i.prev_hash = ser_uint256(vin.prevout.hash)[::-1]
-                    i.prev_index = vin.prevout.n
-                    i.script_sig = vin.scriptSig
-                    i.sequence = vin.nSequence
-                    t.inputs.append(i)
-
-                for vout in prev.vout:
-                    o = proto.TxOutputBinType()
-                    o.amount = vout.nValue
-                    o.script_pubkey = vout.scriptPubKey
-                    t.bin_outputs.append(o)
-                #logging.debug(psbt_in.non_witness_utxo.hash)
-                prevtxs[ser_uint256(psbt_in.non_witness_utxo.sha256)[::-1]] = t
-
+        
         # Sign the transaction
-        tx_details = proto.SignTx()
+        tx_details = TxSignStruct()
         tx_details.version = tx.tx.nVersion
         tx_details.lock_time = tx.tx.nLockTime
 
@@ -259,7 +232,7 @@ class CoolwalletClient(HardwareWalletClient):
     def display_address(self, keypath, p2sh_p2wpkh, bech32):
         raise NotImplementedError('The HardwareWalletClient base class does not implement this method')
 
-    def setup_device(self):
+    def setup_device(self, label='', passphrase=''):
         Coolwallet.setup_device(self.client)
 
     def setup_device_dev(self, HDW_name, Acc_id, Acc_name):
@@ -281,16 +254,8 @@ def enumerate(password=None):
     d_data['type'] = 'coolwallet'
     d_data['path'] = path
 
-    name = 'ikv-wallet-mainnet'
-    wallet_name = name + ' ' * (32 - len(name))
-    
-    acc_id = 0
-    acc_id_format = '{:0>8d}'.format(acc_id)
-    acc_name = 'ikv-account-0'
-
     try:
         client = CoolwalletClient(d_data['path'], password)
-        #client.setup_device_dev(wallet_name, acc_id_format, acc_name)
         client.setup_device()
         master_xpub = client.get_pubkey_at_path('m/0h')['xpub']
         d_data['fingerprint'] = get_xpub_fingerprint_hex(master_xpub)
