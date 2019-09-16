@@ -6,9 +6,6 @@ To implement HWI interface so user can interact with CoolWallet using scripts.
 ## OS
 Ubuntu 16.04.6 LTS
 
-## CoolWallet
-Binding host device first
-
 ## Install Bitcoin Hardware Wallet Interface
 [HWI 1.0.0](https://github.com/bitcoin-core/HWI/tree/1.0.0) released this on 16 Mar
 
@@ -34,7 +31,7 @@ $ cp coolwallet.py ~/Desktop/HWI/hwilib/devices/
 $ cp -r CoolwalletLib/ ~/Desktop/HWI/hwilib/devices/
 ```
 
-# Setup
+# Setup Coolwallet in HWI
 
 ## Add the Coolwallet device at the HWI
 ```
@@ -67,44 +64,36 @@ $ curl http://192.168.66.146:9527/?cmd=80100000
 ## First Binding
 
 - HWI
+Auto binding first host on HWI, 
+then creat HD Wallet using seed at CW-Python/CoolwalletLib/tools/seed.
 ```
 $ cd HWI/
 $ sudo ./hwi.py enumerate
 otp:******
 Remote end closed connection without response
-[{"type": "coolwallet", "error": "Could not open client or get fingerprint information: Done register but not confirmed, plz approve the host at first host", "path": "192.168.66.146"}]
+[{"type": "coolwallet", "path": "192.168.66.146", "fingerprint": "9ab01a72"}]
 ```
 
-- App Server
+# Support Usage
+Current implemented commands are:
+- `enumerate`
+- `getmasterxpub`
+- `signtx`
+- `getxpub`
+- `getkeypool`
+- `setup`
 
-Approve the HWI host at APP Server
-
-- HWI
-```
-$ sudo ./hwi.py enumerate
-[{"type": "coolwallet", "path": "192.168.66.146", "fingerprint": "921eabb2"}]
-```
-
-# Usage
-
-## enumerate
-List all available devices
-```
-$ sudo ./hwi.py enumerate
-[{"type": "coolwallet", "path": "192.168.66.146", "fingerprint": "921eabb2"}]
-```
-
-## getmasterxpub
-Get the extended public key at m/44'/0'/0'
-```
-$ sudo ./hwi.py -d 192.168.66.146 -t coolwallet getmasterxpub
-{"xpub": "xpub6C5xd9tA6t9QXzWBArHT2cLDtBuhogMwNZyBkgmXEJr6jJqB6JCtkaq4jhuqATb5VxKvrU3dKS89dKRFdY31bAAq6e5xLbULVcMWEX8ZQwu"}
-```
 
 ## signtx
 Sign a PSBT
 ```
-$ sudo ./hwi.py -d 192.168.66.146 -t coolwallet signtx [PSBT]
+$ sudo ./hwi.py -d "path" -t "type" signtx [PSBT]
 ```
 [PSBT] can generate from Bitcoin Core, follow below link
 [Using Bitcoin Core with Hardware Wallets](https://github.com/bitcoin-core/HWI/blob/master/docs/bitcoin-core-usage.md)
+
+## setup
+Setup a device
+```
+$ sudo./hwi.py -d "path" -t "type" -i setup
+```
