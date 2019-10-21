@@ -665,7 +665,7 @@ class CoolwalletClient:
         # state 01 (Registered) -> reject
         # state 02 (Confirmed)  -> login
         state = BindInfo(conn, '00')
-       if state == '00':
+        if state == '00':
             self.setup_device()
             print('4.1 init_device -> setup_device')
             return {'success': True}
