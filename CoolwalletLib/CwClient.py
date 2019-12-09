@@ -818,9 +818,14 @@ class CoolwalletClient:
         else:
             raise ValueError('[setup_device] Unknow wallet state, [state]' + state)
 
-        # query key
+        # query key and add internal and external key
+        Client_log.info('[Add internal chain key]')
         keyChainID = '01'
         KeyID = '00000000'
+        HDWNextTrxAddress(self.conn, keyChainID, KeyID)
+        HDWQryAccKeyinfo_dev(self.conn, account_id, keyChainID, KeyID)
+        Client_log.info('[Add external chain key]')
+        keyChainID = '00'
         HDWNextTrxAddress(self.conn, keyChainID, KeyID)
         HDWQryAccKeyinfo_dev(self.conn, account_id, keyChainID, KeyID)
 
